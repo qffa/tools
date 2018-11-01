@@ -6,6 +6,7 @@ Author: QFA
 A script to configure a group of routers.
 """
 
+import os
 from datetime import datetime, timezone
 import socket
 import ipaddress
@@ -22,46 +23,46 @@ class Router(object):
         :param str host:
             hostname or IP address.
         """
-        self._host = host
-        self._ip = None
-        self._hostname = None
+        self.host = host
+        self.ip = None
+        self.hostname = None
 
     def __repr__(self):
         """Return a string representation of this object, for debuging."""
-        return "<Router {}>".format(self._host)
+        return "<Router {}>".format(self.host)
 
     def get_info(self):
         """Return router hostname and IP address."""
 
         try:
-            ipaddress.ip_address(self._host)
-            self._ip = self._host
+            ipaddress.ip_address(self.host)
+            self.ip = self.host
         except:
-            self._hostname = self._host
+            self.hostname = self.host
 
-        if self._ip is None and self._hostname:
+        if self.ip is None and self.hostname:
             try:
-                self._ip = socket.gethostbyname(self._hostname)
+                self.ip = socket.gethostbyname(self.hostname)
             except:
-                self._ip = 'resolve failed'
+                self.ip = 'resolve failed'
 
-        if self._hostname is None and self._ip:
+        if self.hostname is None and self.ip:
             try:
-                host_info = socket.gethostbyaddr(self._ip)
-                self._hostname = host_info[0]
+                host_info = socket.gethostbyaddr(self.ip)
+                self.hostname = host_info[0]
             except:
-                self._hostname = 'name resolve failed'
+                self.hostname = 'name resolve failed'
                     
         return {
-            "hostname": self._hostname,
-            "IP": self._ip,
+            "hostname": self.hostname,
+            "IP": self.ip,
             }
 
     def _ssh(self):
         """SSH to router. Return paramiko SSHClient"""
         ssh_client = paramiko.SSHClient()
         ssh_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        ssh_client.connect(self._host, 22, Config.USERNAME, Config.PASSWORD, look_for_keys=False, allow_agent=False)
+        ssh_client.connect(self.host, 22, Config.USERNAME, Config.PASSWORD, look_for_keys=False, allow_agent=False)
         return ssh_client
 
     def sshprobe(self):
@@ -105,8 +106,27 @@ class Router(object):
             interfaces.append(entry.split()[0])
 
         return interfaces
+
+    def get_snmp(self):
+        "return a list of snmp string"
+        ssh = self._ssh()
+        stdin, stdout, stderr = ssh.exec_command("show run | in snmp-server commu")
+        output = []
+        for line in stdout:
+            if "snmp-server" in line:
+                output.append(line.strip('\n\r'))
+        ssh.close()
+        try:
+            output.remove('')
+        except:
+            pass
+        snmp = []
+        for item in output:
+            snmp.append(item.split()[2:])
+
+        return snmp
         
-    def disable_parp(self, interfaces):
+    def _disable_parp(self, interfaces):
         """disable proxy arp for interfaces.
         :param list interfaces.
         """
@@ -135,6 +155,12 @@ class Router(object):
                 print('%-20s%-20s' %(iface, "interface not found"))
         print("\n")
 
+    def disable_parp(self):
+        """higher API for self._disable_parp
+        """
+        interfaces = self.l3iface()
+        self._disable_parp(interfaces)
+
     def check_parp(self, interface):
         """check if proxy ARP enabled on interface.
         Return enabled, disabled or not found."""
@@ -151,31 +177,47 @@ class Router(object):
         else:
             return "Interface not found."
 
-        
+
+
+def disable_parp(router):
+    router.disable_parp()
+
+def print_snmp(router):
+    snmp = router.get_snmp()
+    for item in snmp:
+        item.insert(0, router.host)
+        print(item)
+        #print("%-40s%-6s" %(item[0], item[1]))
+        pass
+    print("\n")
+
+
 if __name__ == "__main__":
-    t = datetime.utcnow().replace(tzinfo=timezone.utc)
-    print("\n==========")
-    print("This script is to disable proxy ARP for router layer 3 interfaces.")
-    print("Start at: ", t.ctime())
-    print("==========\n\n")
-    with open(Config.ROUTERLIST) as file:
-        for line in file:
-            host = line.strip('\n')
-            host = host.strip(' ')
 
-            router = Router(host)
-            print("---" + router._host + "---\n")
-            ssh_status = router.sshprobe()
-            if ssh_status == "succeed":
-                print("Login successfully!\n")
-                interfaces = router.l3iface()
-                router.disable_parp(interfaces)
-            else:
-                print("Failed to access to this router!\n", "->", ssh_status, "\n\n")
-            
+    def run(func, message):
+        t = datetime.utcnow().replace(tzinfo=timezone.utc)
+        print("\n==========")
+        print(message)
+        print("Start at: ", t.ctime())
+        print("==========\n\n")
+        router_list_file = os.path.join(os.getcwd(), "routers.txt")
+        with open(router_list_file) as file:
+            for line in file:
+                host = line.strip('\n')
+                host = host.strip(' ')
 
-##router = Router('192.168.133.10')
-##ll = router.l3iface()
-##router.disable_parp(ll)
+                router = Router(host)
+                print("---" + router.host + "---\n")
+                ssh_status = router.sshprobe()
+                if ssh_status == "succeed":
+                    print("Login successfully!\n")
+                    func(router)
+                else:
+                    print("Failed to access to this router!\n", "->", ssh_status, "\n\n")
+
+    message = "This script is to get SNMP string from router"         
+    run(print_snmp, message)
 
 
+
+    
