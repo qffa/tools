@@ -1,7 +1,7 @@
 """
 simple ping implementation
+with muliti-processing
 
-bug: multi-processing, read same icmp socket file
 """
 
 
@@ -11,8 +11,7 @@ import time
 import struct
 import os
 import array
-from multiprocessing import Pool, Process
-import threading
+from multiprocessing import Process
 
 
 class ICMPPacketBase():
@@ -37,7 +36,7 @@ class ICMPPacketBase():
 
 
 
-class ICMPEchoRequestPacket(ICMPPacketBase):
+class ICMPRequestPacket(ICMPPacketBase):
 
     def __init__(self, seq):
         """specify the packet sequence
@@ -57,7 +56,7 @@ class ICMPEchoRequestPacket(ICMPPacketBase):
         self.packet = self.header + self.data
 
 
-class ICMPEchoReplyPacket(ICMPPacketBase):
+class ICMPReplyPacket(ICMPPacketBase):
     """parse ICMP echo reply packet
     """
 
@@ -89,44 +88,16 @@ class Ping():
         self.target=target
         self.timeout = timeout
         self.seq = seq
+        self.send_packet = ICMPRequestPacket(seq)
 
 
-    def send(self, packet, _socket):
-        """send icmp echo request
-        """
-
-        _socket.settimeout(self.timeout)
-        try:
-            _socket.sendto(packet.packet, (self.target_ip, 10))
-        except socket.error:
-            return False
-        return True
-
-
-    def recv(self, _socket):
-        """receive icmp echo reply
-        """
-        try:
-            raw_packet, addr = _socket.recvfrom(1024)
-            recv_time = time.time()
-        except socket.timeout:
-            return False, 'timeout'
-        except socket.error:
-            return False, 'socket error'
-        p = ICMPEchoReplyPacket(raw_packet)
-        p.recv_time = recv_time
-        return True, p
-
-
-    def parse(self, recv_packet, send_packet_seq, send_packet_id):
+    def parse(self, recv_packet, send_packet_seq):
         """parse icmp echo reply
         """
-        if recv_packet.id != send_packet_id:
-            return 'timeout'
-        elif not recv_packet.is_valid():
+        if not recv_packet.is_valid():
             return 'checksum error'
         elif int(recv_packet.type) != 0:
-            return 'error code: '
+            return 'error code: {}/{}'.format(recv_packet.type, recv_packet.code)
         elif recv_packet.seq != send_packet_seq:
             return 'wrong packet seq'
         else:
@@ -143,33 +114,40 @@ class Ping():
             self.target_ip = socket.gethostbyname(self.target)
         except:
             return 'failed to resolve hostname'
-
         s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.getprotobyname('icmp'))
-        packet = ICMPEchoRequestPacket(self.seq)
-        if self.send(packet, s):
-            packet_returned, obj = self.recv(s)
-            if packet_returned:
-                recv_packet = obj
-                msg = self.parse(recv_packet, packet.seq, packet.id)
-            else:
-                msg = obj
-        else:
-            msg = 'socket error'
+        s.settimeout(self.timeout)
+
+        # send ICMP echo request packet
+        try:
+            s.sendto(self.send_packet.packet, (self.target_ip, 10))
+        except:
+            return 'socket error'
+        # receive ICMP response packet
+        while True:
+            try:
+                packet, addr = s.recvfrom(1024)
+                recv_time = time.time()
+            except socket.timeout:
+                return 'timeout'
+            except:
+                return 'recv socket error'
+            p = ICMPReplyPacket(packet)
+            p.recv_time = recv_time
+            if p.id == self.send_packet.id:
+                self.recv_packet = p
+                break
+
+
+
+        msg = self.parse(self.recv_packet, self.send_packet.seq)
 
         return msg
 
 
 
     def __repr__(self):
-        return "Ping<>"
+        return "Ping<{}>".format(self.target)
 
-
-##p1 = ICMPEchoRequestPacket(1)
-##s = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.getprotobyname('icmp'))
-##ping = Ping('8.8.8.8')
-##ping.target_ip='8.8.8.8'
-##ping.send(p1, s)
-##s, o = ping.recv(s)
 
 
 def f(host):
@@ -179,18 +157,13 @@ def f(host):
         print([host, result, i])
 
 def main():
-    hosts = ['www.baidu.com', '123.123.123.123', 'www.zhihu.com']
+    hosts = ['www.baidu.com', '123.123.123.123', '8.8.8.8', 'cn.bing.com', '8.8.4.4']
     for host in hosts:
         p = Process(target=f, args=(host,))
         p.start()
+        #p.join()
 
 if __name__ == '__main__':
 
     main()
 
-##    hosts = ['10.96.4.198', '8.8.8.8', 'a123123', '123.123.123.123', '10.99.75.254']
-##    for host in hosts:
-##        print(host)
-##        for seq in range(10):
-##            ping = Ping(host, seq)
-##            print(ping.run())
