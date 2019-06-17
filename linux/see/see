@@ -1,0 +1,109 @@
+#!/bin/bash
+
+SERVER_LIST=/home/mobaxterm/server_list
+
+#如果不提供参数，打印server列表
+if [ $# = 0 ]; then
+    cat $SERVER_LIST
+    exit 0
+fi
+
+#服务器连接函数
+function connect(){
+    echo "connect to $1 ..."
+    ssh jack.fang@rootbrg@$1@10.26.2.53
+    exit 0
+}
+
+#根据域名解析ip地址
+function get_ip_by_name(){
+    IP=$(host $1 | grep "[[:digit:]]\{1,3\}.[[:digit:]]\{1,3\}.[[:digit:]]\{1,3\}.[[:digit:]]\{1,3\}" | cut -d ' ' -f4 | uniq)
+    IP=$(echo $IP | cut -d ' ' -f1)
+    echo "$1[$IP]"
+}
+
+
+
+#服务器信息解析函数
+function parse_server(){
+
+    #检查参数是否是IP地址
+    echo $1 | egrep "^[[:digit:]]\{1,3\}.[[:digit:]]\{1,3\}.[[:digit:]]\{1,3\}.[[:digit:]]\{1,3\}" >> /dev/null
+    if [ $? = 0 ]; then
+        SERVER_IP=$1
+    fi
+
+    #命令行参数是否是server ID（INDEX）
+    echo $1 | grep ^[[:digit:]]*$ >>/dev/null
+    if [ $? = 0 ]; then
+        INDEX=$1
+    else
+        SERVER_NAME=$1
+    fi
+}
+
+
+
+#连接至服务器列表主机
+function see_server(){
+
+    if [ $SERVER_IP ]; then
+        connect $SERVER_IP
+
+    fi
+
+
+    #根据INDEX或SERVER_NAME检索服务器
+    if [ $INDEX ]; then
+        MATCH_COUNT=$(grep -c "^$INDEX[[:space:]]" $SERVER_LIST)
+        SERVER_INFO=$(grep "^$INDEX[[:space:]]" $SERVER_LIST)
+    else
+        MATCH_COUNT=$(grep -c "$SERVER_NAME" $SERVER_LIST)
+        SERVER_INFO=$(grep "$SERVER_NAME" $SERVER_LIST)
+    fi
+
+    #未找到服务器
+    if [ $MATCH_COUNT = 0 ]; then
+        echo "error: server not found"
+        exit 1
+
+    #找到多个服务器
+    elif [ $MATCH_COUNT -gt 1 ]; then
+        echo "servers maybe you need:"
+        echo "$SERVER_INFO"
+        exit 1
+
+    #定位到唯一一台服务器
+    else
+        SERVER_NAME=$(echo $SERVER_INFO | cut -d ' ' -f2)
+        SERVER_IP=$(echo $SERVER_INFO | cut -d ' ' -f3)
+        echo "$SERVER_NAME[$SERVER_IP]"
+        connect $SERVER_IP
+
+    fi
+
+}
+
+
+
+
+case $1 in
+-s)
+    get_ip_by_name $2
+    connect $IP
+    ;;
+-h)
+    echo "help info"
+    exit 0
+    ;;
+-*)
+    echo "help infooo"
+    exit 2
+    ;;
+
+*)
+    parse_server $1
+    see_server
+    ;;
+esac
+
