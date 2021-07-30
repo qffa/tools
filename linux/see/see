@@ -1,19 +1,27 @@
 #!/bin/bash
 
 SERVER_LIST=/home/mobaxterm/server_list
+IS_HOSTNAME=0
+USE_ANSIBLE=0
+NEED_HELP=0
+SERVER_IP=0
+ARGC=$#
+ARGV=($*)
+
 
 #如果不提供参数，打印server列表
-if [ $# = 0 ]; then
+if [ $ARGC = 0 ]; then
     cat $SERVER_LIST
     exit 0
 fi
 
-function help(){
+function print_help(){
 
 echo "
 Usage: see [OPTION] [ID] [KEYWORD] [IP] [HOSTNAME]
 List servers with matched KEYWORD, or ssh to it if only one server matched
 
+  -a    use ansible account to login server
   -s    reslove hostname by DNS query
   -h    print help
   
@@ -31,7 +39,11 @@ eg.
 		ssh to the server nas-1(that is already in server list)
   see -s web01.example.com
 		ssh to the server that hostname is web01.example.com
-		
+  see -a 10.1.1.1
+        ssh to server 10.1.1.1 with ansible account
+  see -a -s web01.example.com		
+		ssh to the server that hostname is web01.example.com with ansible account
+
 server list
   you can find server list at here: /home/mobaxterm/server_list
   "
@@ -40,23 +52,33 @@ server list
 
 #服务器连接函数
 function connect(){
-    echo "connect to $1 ..."
-    ssh jack.fang@rootbrg@$1@10.26.2.53
+    if [ $USE_ANSIBLE -eq 1 ]; then
+        echo "connect to $1 with ansible ..."
+        sshpass -f ~/.see/pass_a ssh ansible@$1
+    else
+        echo "connect to $1 ..."
+        sshpass -f ~/.see/pass ssh jack.fang@rootbag@$1@10.167.146.141 #Jump server IP
+        #10.67.246.241
+        #10.25.2.53
+
+    fi
     exit 0
 }
+
 
 #根据域名解析ip地址
 function get_ip_by_name(){
     if [ ! $1 ]; then
         echo "please provide server name"
-        exit 1
+        return 1
     fi
     IP=$(host $1 | grep "[[:digit:]]\{1,3\}.[[:digit:]]\{1,3\}.[[:digit:]]\{1,3\}.[[:digit:]]\{1,3\}" | cut -d ' ' -f4 | uniq)
     IP=$(echo $IP | cut -d ' ' -f1)
     if [ $IP ]; then
         echo "$1[$IP]"
+        SERVER_IP=$IP
     else
-        exit 1
+        return 1
     fi
 }
 
@@ -69,6 +91,7 @@ function parse_server(){
     echo $1 | egrep "^[[:digit:]]\{1,3\}.[[:digit:]]\{1,3\}.[[:digit:]]\{1,3\}.[[:digit:]]\{1,3\}" >> /dev/null
     if [ $? = 0 ]; then
         SERVER_IP=$1
+		return 0
     fi
 
     #命令行参数是否是server ID（INDEX）
@@ -85,9 +108,9 @@ function parse_server(){
 #连接至服务器列表主机
 function see_server(){
 
-    if [ $SERVER_IP ]; then
+    if [ ! $SERVER_IP = 0 ]; then
         connect $SERVER_IP
-
+		return 0
     fi
 
 
@@ -109,7 +132,7 @@ function see_server(){
     elif [ $MATCH_COUNT -gt 1 ]; then
         echo "servers maybe you need:"
         echo "$SERVER_INFO"
-        exit 1
+        exit 0
 
     #定位到唯一一台服务器
     else
@@ -123,25 +146,53 @@ function see_server(){
 }
 
 
+#解析参数
+function parse_args(){
+    #echo "parse args"
+    for (( i=0; i<$ARGC; i++ )) do
+        #echo ${ARGV[$i]}
+        case ${ARGV[$i]} in
+        -s)
+            IS_HOSTNAME=1
+            unset ARGV[$i]
+            ;;
+        -a)
+            USE_ANSIBLE=1
+            unset ARGV[$i]
+            ;;
+        -h)
+            NEED_HELP=1
+            unset ARGV[$i]
+            ;;
+        -*)
+            unset ARGV[$i]
+            ;;
+        esac
+    done
+
+    ARGV=(${ARGV[*]})
+
+}
 
 
-case $1 in
--s)
-    get_ip_by_name $2
-    connect $IP
-    ;;
--h)
-    help
-    exit 0
-    ;;
--*)
-    help
-    exit 2
-    ;;
+#主函数
+function run() {
+    parse_args
 
-*)
-    parse_server $1
-    see_server
-    ;;
-esac
+    if [ $NEED_HELP -eq 1 ]; then
+        print_help
+    elif [ $IS_HOSTNAME -eq 1 ]; then
+        get_ip_by_name $ARGV
+        connect $SERVER_IP
+    else
+        parse_server $ARGV
+        see_server
+    fi
+
+}
+
+
+run
+
+
 
